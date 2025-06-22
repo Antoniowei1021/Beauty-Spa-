@@ -178,6 +178,587 @@ cool
 ![image](https://github.com/user-attachments/assets/20e27897-78e6-4fd5-94f5-6f5f60f4a17b)
 
 
+## Select Top company
+```python
+query = """
+SELECT 
+    name, 
+    stars, 
+    review_count
+FROM yelp_business
+WHERE categories LIKE '%Beauty & Spas%'
+ORDER BY stars DESC, review_count DESC
+LIMIT 1;
+"""
+df = pd.read_sql(query, conn)
+df.to_csv('/Users/weichi/Desktop/top_company.csv', index=False)
+
+conn.close()
+```
+| Name                        | Stars | Review Count |
+|----------------------------|-------|---------------|
+| Fabulous Eyebrow Threading |  5.0  |      475      |
+
+## Select Bottom Company
+
+```python
+query = """
+SELECT 
+    name, 
+    stars, 
+    review_count
+FROM yelp_business
+WHERE categories LIKE '%Beauty & Spas%'
+ORDER BY stars ASC, review_count ASC
+LIMIT 1;
+"""
+df = pd.read_sql(query, conn)
+df.to_csv('/Users/weichi/Desktop/bottom_company.csv', index=False)
+
+conn.close()
+```
+
+### Bottom Rated Company
+
+| Name                   | Stars | Review Count |
+|------------------------|-------|---------------|
+| Golden Palace Massage  | 1.0   | 3             |
+
+### 2 (3) What are the top keywords? 
+
+For future sentiment analysis, it is crucial to gain insights from the review texts customers have given. But if spotting keywords directly from regular texts, most likely the results would be stopwords like "uh", "a", "the", "this", which would be meaningless for analysis. Therefore, a filter needs to be applied to the texts to remove regular stopwords to generate meaningful words. In this section, spacy is particularly helpful. 
+
+First, remove the punctuations:
+```python
+import re
+from collections import Counter
+import csv
+import string
+reviews = []
+with open('/Users/weichi/Desktop/beauty_spas_monthly_reviews5.csv', newline='') as f:
+    reader = csv.reader(f)
+    next(reader) 
+    for row in reader:
+        reviews.append(row[0])
+
+#defining the function to remove punctuation
+def remove_punctuation(reviews):
+    punctuationfree="".join([i for i in reviews if i not in string.punctuation])
+    return punctuationfree
+#storing the puntuation free text
+reviews_punctuationfree=[]
+for i in reviews:
+    reviews_punctuationfree.append(remove_punctuation(i))
+reviews_punctuationfree[:10]
+lower = []
+for i in reviews_punctuationfree:
+    lower.append(i.lower())
+lower[:1]
+```
+['alice jane and the entire staff here stand out above the rest of the nail salons in town  believe me ive tried a vast majority of them \nive now been going here for well over a year  i refer anyone and everyone i know here as well as bringing friends who are in town here  my mom and myself are regulars and we wouldnt have it any other way  \nalways a lovely experience a relaxed ambiance and movies  yes new and current movies as well as some classics \nabsolutely everything about stars nails is comfortable the mani stations the pedi chairs and yes all are facing the tv set for perfect movie viewing  \nclassic mani and pediatric they have them  trendy pedi treatments and facials have them as well  colors of the trendy shades abound \nrejoice  its here for you along with reasonable pricing and excellent service \ndont be ashamed how bad joss feet become boot season is here and those crest feet in wed of a wonderful pedi treatment  star nails has a pedi menu peruse it and be inclined to try all  beauty intervention here is a pleasure tuning those feet and legs  trust me feet deserve this place they do support the entire body think about it why would anyone in their right mind not treat them well \njane alice or any of the staff here will sooth moisturize with a dose of sloughing lotion and buff to perfection ahh what a relief right\nthe finale will be a slight massage for those hands or feet and then polish viola',]
+
+Then, remove stopwords and extract the keywords:
+```python
+from nltk.stem import PorterStemmer
+from nltk.tokenize import word_tokenize
+from nltk.stem import WordNetLemmatizer
+def tokenization(text):
+    tokens = re.split(r'\W+', text)
+    return tokens
+#applying function to the column
+tokenized_reviews = []
+for i in lower:
+    tokenized_reviews.append(tokenization(i))
+tokenized_reviews[:10]
+
+nltk.download('punkt')
+nltk.download('stopwords')
+from nltk.corpus import stopwords
+#defining the function to remove stopwords
+stopwords = nltk.corpus.stopwords.words('english')
+def remove_stopwords(text):
+    output= [i for i in text if i not in stopwords]
+    return output
+#applying function to the column
+cleaned_reviews = []
+for i in tokenized_reviews:
+    cleaned_reviews.append(remove_stopwords(i))
+cleaned_reviews[:10]
+nltk.download('wordnet')
+nltk.download('omw-1.4')
+nltk.download('averaged_perceptron_tagger')
+from nltk.corpus import wordnet
+from nltk.corpus import wordnet as wn
+
+wordnet_lemmatizer = WordNetLemmatizer()
+
+#defining the function for lemmatization
+def lemmatizer(text):
+    lemm_text = [wordnet_lemmatizer.lemmatize(word) for word in text]
+    return lemm_text
+#applying function to the column
+lemmatized_reviews = []
+for i in cleaned_reviews:
+    lemmatized_reviews.append(lemmatizer(i))
+lemmatized_reviews[:10]
+```
+
+
+[['super',
+  'simple',
+  'place',
+  'amazing',
+  'nonetheless',
+  'around',
+  'since',
+  '30',
+  'still',
+  'serve',
+  'thing',
+  'started',
+  'bologna',
+  'salami',
+  'sandwich',
+  'mustard',
+  'staff',
+  'helpful',
+  'friendly'],
+ ['small',
+  'unassuming',
+  'place',
+  'change',
+  'menu',
+  'every',
+...
+  'one',
+  'little',
+  'guy',
+  'friend',
+  'love']]
+  
+Above is just a demonstration of the process of extracting keywords. A similar process would be applied later in this project for real sentiment analysis. 
+
+### 3 Sentimental Analysis
+
+In this part, 2 sentiment analysis tools will be used to generate positive and negative attitudes towards different reviews. The first one is VADER and the next one is TextBlob.These two sentimental analysis tools are significantly different from each other. 
+
+```python
+from nltk.sentiment.vader import SentimentIntensityAnalyzer
+import matplotlib.pyplot as plt
+nltk.download('vader_lexicon')
+
+vader = SentimentIntensityAnalyzer()
+import matplotlib.pyplot as plt
+from nltk.sentiment import SentimentIntensityAnalyzer
+import nltk
+
+vader = SentimentIntensityAnalyzer()
+
+compound_scores = []
+negative_scores = []
+positive_scores = []
+neutral_scores = []
+
+# Assuming `lower[:20]` is a list of preprocessed strings
+for text in lower[:4000]:
+    score = vader.polarity_scores(text)
+    compound_scores.append(score['compound'])
+    if score['compound'] >= 0.99:
+        print(text)
+
+# Plot compound score histogram
+plt.figure(figsize=(8, 5))
+plt.hist(compound_scores, bins=20, color='skyblue', edgecolor='black', alpha=0.7)
+plt.title('Histogram of VADER Compound Sentiment Scores')
+plt.xlabel('Compound Sentiment Score')
+plt.ylabel('Frequency')
+plt.grid(True)
+plt.show()
+
+```
+![image](https://github.com/user-attachments/assets/d588bc92-0bd8-4841-8f74-83d9ccd0ab55)
+
+From the graph, it is easy to note that VADER is a very positive analysis model. It tends to skew extremely leftward and give most of the reviews a very high positive score. Though this model only examined 4000 reviews(for faster runtime), the trend was consistent throughout the whole dataset.
+
+The next one is TextBlob:
+
+```python
+from textblob import TextBlob
+import matplotlib.pyplot as plt
+
+polarity_scores = []
+
+for text in lower[:2000]:
+    blob = TextBlob(text)
+    polarity_scores.append(blob.sentiment.polarity)
+
+# Bar plot of polarity scores (binned)
+import numpy as np
+bins = np.linspace(-1, 1, 21)
+hist, bin_edges = np.histogram(polarity_scores, bins=bins)
+bin_centers = 0.5 * (bin_edges[1:] + bin_edges[:-1])
+
+plt.figure(figsize=(10, 6))
+plt.bar(bin_centers, hist, width=0.09, color='lightcoral', edgecolor='black')
+plt.title('Bar Plot of TextBlob Polarity Scores')
+plt.xlabel('Polarity Score (Binned)')
+plt.ylabel('Frequency')
+plt.grid(True, axis='y')
+plt.show()
+```
+![image](https://github.com/user-attachments/assets/edc962bc-a416-4a40-9bee-c9dabcdb6ce3)
+
+This time TextBlob is more normally distributed and slightly skewed to the left, with a median at 0.3. 
+
+Next, the reviews are splitted into two groups, positive and negative. One thing to note here is that adjectives are very effective in conveying sentiments, which is spacy's specialty. Therefore, instead of using BERTopic for regular analysis, here I utilized spacy for a better result. Finally, I created a word cloud for a better view of the words. Below is the positive review part. 
+
+```python
+from transformers import pipeline
+
+classifier = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
+texts = lower[:2000] 
+results = classifier(texts, truncation=True, batch_size=16)
+positive = []
+negative = []
+for text, res in zip(texts, results):
+    if res['label'] == 'POSITIVE':
+        positive.append(text)
+    else:
+        negative.append(text)
+
+nltk.download('stopwords')
+stop_words = set(stopwords.words('english'))
+
+def clean_text(text):
+    text = text.lower()
+    text = re.sub(r'[^a-z\s]', '', text)  
+    words = text.split()
+    words = [w for w in words if w not in stop_words]
+    return ' '.join(words)
+lower_cleaned = [clean_text(review) for review in positive]
+lower_cleaned2 = [clean_text(review) for review in negative] # clean up the text for better precision
+
+import spacy 
+nlp = spacy.load('en_core_web_sm')
+from wordcloud import WordCloud
+from umap.umap_ import UMAP
+adjectives = []
+nouns = []
+docs = list(nlp.pipe(lower_cleaned[:2000]))
+for doc in docs:
+    for token in doc:
+        if token.pos_ == 'ADJ' and not token.is_stop and len(token.text) > 2:
+            adjectives.append(token.lemma_.lower())
+        elif token.pos_ in ['NOUN', 'PROPN'] and not token.is_stop and len(token.text) > 2:
+            nouns.append(token.lemma_.lower())
+umap_model = UMAP(random_state=10)  # fixed seed for reproducibility
+topic_model = BERTopic(umap_model=umap_model)
+topics, probs = topic_model.fit_transform(adjectives)
+topic_info = topic_model.get_topic_info()
+
+# Extract the first keyword (after topic number)
+topic_info['first_word'] = topic_info['Name'].apply(lambda x: x.split('_')[1] if '_' in x else None)
+
+# Select relevant columns
+keyword_dict = dict(
+    topic_info.apply(lambda row: (row['Name'].split('_')[1], row['Count']), axis=1)
+)
+keyword_dict = word_freq_cleaned = {v[0]: v[1] for v in keyword_dict.values()}
+print(keyword_dict)
+del keyword_dict['great']
+del keyword_dict['good']
+del keyword_dict['amazing']
+del keyword_dict['nude']
+wordcloud1 = WordCloud(width=800, height=400, background_color='white').generate_from_frequencies(keyword_dict)
+
+# Plot it
+plt.figure(figsize=(10, 5))
+plt.imshow(wordcloud1, interpolation='bilinear')
+plt.axis('off')
+plt.title('Positive Words from Reviews')
+```
+{'organic': 148, 'great': 700, 'good': 519, 'amazing': 402, 'friendly': 300, 'clean': 296, 'nice': 267, 'new': 224, 'happy': 202, 'sure': 135, 'professional': 125, 'beautiful': 125, 'awesome': 119, 'wonderful': 112, 'recommend': 95, 'perfect': 88, 'excellent': 86, 'able': 84, 'sweet': 78, 'long': 77, 'comfortable': 77, 'little': 74, 'regular': 72, 'busy': 71, 'worth': 66, 'right': 65, 'reasonable': 63, 'polite': 61, 'thorough': 56, 'different': 56, 'glad': 55, 'hot': 49, 'fantastic': 49, 'favorite': 48, 'bad': 47, 'melissa': 46, 'old': 45, 'fabulous': 44, 'quick': 42, 'previous': 42, 'attentive': 41, 'close': 41, 'satisfied': 41, 'soft': 39, 'cute': 39, 'hard': 38, 'extra': 38, 'late': 38, 'second': 37, 'natural': 37, 'sns': 36, 'fast': 35, 'dry': 35, 'well': 35, 'easy': 34, 'gentle': 33, 'overall': 33, 'horrible': 32, 'ill': 32, 'warm': 31, 'gorgeous': 31, 'available': 31, 'super': 31, 'pleasant': 30, 'straight': 30, 'particular': 30, 'small': 30, 'precise': 29, 'open': 29, 'technician': 29, 'exact': 29, 'free': 29, 'impressed': 28, 'short': 28, 'cheap': 28, 'acrylic': 28, 'personal': 28, 'facial': 28, 'french': 27, 'disappointed': 27, 'entire': 27, 'fair': 27, 'quiet': 27, 'big': 27, 'trendy': 27, 'affordable': 27, 'phenomenal': 26, 'patient': 26, 'real': 26, 'high': 26, 'polish': 26, 'pleased': 26, 'knowledgeable': 25, 'efficient': 25, 'nude': 24, 'talented': 24, 'modern': 24, 'thick': 23, 'helpful': 23, 'pedis': 23, 'manipedi': 23, 'south': 23, 'fancy': 23, 'superior': 23, 'excited': 23, 'single': 22, 'meticulous': 22, 'funny': 21, 'green': 21, 'kind': 21, 'detailed': 20, 'haircut': 20, 'tony': 20, 'stylist': 20, 'picky': 20, 'hesitant': 20, 'positive': 19, 'relaxed': 19, 'fresh': 19, 'live': 19, 'basic': 19, 'exceptional': 19, 'ready': 19, 'lucky': 19, 'white': 18, 'normal': 18, 'incredible': 18, 'thin': 17, 'pink': 17, 'local': 17, 'disposable': 17, 'lovely': 16, 'important': 16, 'strong': 16, 'enjoyable': 16, 'creative': 16, 'convenient': 16, 'loyal': 15, 'plenty': 15, 'interesting': 15, 'magic': 15, 'blonde': 15, 'possible': 15, 'inside': 15, 'large': 15, 'careful': 15, 'huge': 15, 'nervous': 15, 'future': 14, 'numerous': 14, 'frequent': 14, 'similar': 14, 'grateful': 14, 'awkward': 14, 'special': 14, 'spacious': 14, 'dark': 14, 'popular': 13, 'prior': 13, 'classic': 13, 'trish': 12, 'tammy': 12, 'crazy': 12, 'callus': 12, 'pricey': 12, 'caring': 12, 'brazilian': 12, 'luxurious': 12, 'essential': 11, 'desperate': 11, 'pampered': 11, 'welcome': 11, 'skeptical': 11, 'royal': 10}
+Text(0.5, 1.0, 'Positive Words from Reviews')
+
+![image](https://github.com/user-attachments/assets/70aa76fc-0015-474a-b832-b6f65e67c349)
+
+And here is the negative word cloud:
+
+```python
+docs1 = list(nlp.pipe(lower_cleaned2[:2000]))
+adjectives2 = []
+nouns2 = []
+for doc in docs1:
+    for token in doc:
+        if token.pos_ == 'ADJ' and not token.is_stop and len(token.text) > 2:
+            adjectives2.append(token.lemma_.lower())
+        elif token.pos_ in ['NOUN', 'PROPN'] and not token.is_stop and len(token.text) > 2:
+            nouns2.append(token.lemma_.lower())
+umap_model = UMAP(random_state=10)  # fixed seed for reproducibility
+topic_model = BERTopic(umap_model=umap_model)
+topic_model = BERTopic()
+topics, probs = topic_model.fit_transform(nouns2)
+topic_info = topic_model.get_topic_info()
+print(topic_info[:20])
+keyword_dict2 = dict(
+    topic_info.apply(lambda row: (row['Name'].split('_')[1], row['Count']), axis=1)
+)
+keyword_dict2 = word_freq_cleaned = {v[0]: v[1] for v in keyword_dict2.values()}
+del keyword_dict2['nail']
+del keyword_dict2['foil']
+
+wordcloud2 = WordCloud(width=800, height=400, background_color='white').generate_from_frequencies(keyword_dict2)
+# Plot it
+plt.figure(figsize=(10, 5))
+plt.imshow(wordcloud2, interpolation='bilinear')
+plt.axis('off')
+plt.title('Negative Words from Reviews')
+plt.show()
+```
+![image](https://github.com/user-attachments/assets/be95bbd4-aa46-4191-9a80-7ef60c33225e)
+
+This time I used nouns to point out areas that can cause negative reviews. 
+
+Based on the two word clouds—one for positive words and one for negative words—from reviews of beauty & spa businesses, we can infer some clear strengths and weaknesses commonly mentioned by customers.
+
+✅ Advantages (Positive Word Cloud)
+
+1. Customer Experience & Atmosphere
+Words like "friendly," "nice," "pleasant," "attentive," "professional," "comfortable," "warm," "relaxed" suggest customers appreciate:
+Welcoming and respectful staff
+A soothing, relaxing environment
+Personalized attention
+2. Quality of Service
+Terms such as "clean," "perfect," "thorough," "gentle," "efficient," "precise," "professional" reflect:
+High hygiene standards
+Skilled and detail-oriented technicians
+Reliable service delivery
+3. Emotional Impact
+Words like "happy," "satisfied," "awesome," "fabulous," "wonderful," "amazing" imply:
+Many customers leave feeling emotionally uplifted
+Businesses often exceed expectations
+4. Organic/Healthy Offerings
+Keywords like "organic," "natural" suggest:
+Some businesses stand out for offering chemical-free or eco-conscious services
+
+❌ Downsides (Negative Word Cloud)
+
+1. Service Delivery & Scheduling
+Prominent words include "service," "time," "appointment," "minute," "wait," "lunch," "hour," "customer":
+Customers may experience long wait times or rushed appointments
+Poor time management or scheduling conflicts are frequent complaints
+2. Specific Services
+Terms like "pedicure," "gel," "manicure," "massage," "fill," "acrylic" may point to:
+Inconsistent quality across specific services
+Issues with product durability (e.g., gel nails chipping early)
+3. Pricing & Promotions
+Words like "certificate," "coupon," "price," "discount," "groupon" indicate:
+Customers might face confusion or dissatisfaction related to deal redemption
+Some businesses may upsell or change terms after purchase
+4. Atmosphere & Cleanliness Issues
+Words like "place," "salon," "chair," "tech," "staff," "bathroom" suggest:
+Mixed experiences with the physical environment or facility upkeep
+Complaints about rude or inattentive technicians
+
+### 4 Final analysis
+
+After the sentiment analysis of the reviews, we understand what makes a good company in this industry. Now we need to find the best overall companies. 
+
+1) Rank the top 10 companies with review counts.
+```python
+reviews2 = []
+df = pd.read_csv('/Users/weichi/Desktop/beauty_spas_monthly_reviews6.csv')
+summary = df.groupby('name').agg({
+    'review_count': 'sum',
+    'avg_rating': 'mean'
+}).sort_values(by='review_count', ascending=False)
+
+print(summary.head(10))
+```
+### Top Reviewed Beauty & Spa Businesses
+
+| Name                   | Review Count | Average Rating |
+|------------------------|--------------|----------------|
+| Diamond Nails & Spa    | 622          | 4.14           |
+| Polished Nails & Spa   | 508          | 3.19           |
+| Elaine's Nails         | 463          | 4.40           |
+| LOOK Style Society     | 376          | 4.32           |
+| The Nail Bar           | 370          | 4.13           |
+| Pink Nails             | 370          | 3.12           |
+| Nailed and Lashed      | 352          | 3.68           |
+| FINO for MEN           | 351          | 4.71           |
+| 702 Nail Lounge        | 346          | 4.39           |
+| Bombshell Nail & Spa   | 341          | 3.96           |
+
+```python
+# Step 1: Get top 4 business names by total review count
+summary = df.groupby('name')['review_count'].sum().sort_values(ascending=False).reset_index()
+top_names = summary['name'].tolist()
+
+# Step 2: Filter to only those businesses
+df_filtered = df[df['name'].isin(top_names)]
+
+# Step 3: Group by month and sum review_count
+monthly_total = df_filtered.groupby('month')['review_count'].sum().reset_index()
+
+plt.figure(figsize=(12, 6))
+plt.plot(monthly_total['month'], monthly_total['review_count'], marker='o')
+
+plt.title('Total Monthly Review Count (Top 4 Nail Spas)')
+plt.xlabel('Month')
+plt.ylabel('Total Review Count')
+plt.xticks(rotation=45)
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+df['month'] = pd.to_datetime(df['month'])
+
+# Earliest month each business appears
+first_seen = df.groupby('name')['month'].min().reset_index()
+first_seen.columns = ['name', 'first_month']
+
+# Merge with overall review stats
+recent_df = df.merge(first_seen, on='name')
+
+# Filter businesses that appeared after 2015
+emerging = recent_df[recent_df['first_month'] >= '2016-01-01']
+# Calculate total reviews per business
+total_reviews = emerging.groupby('name')['review_count'].sum().reset_index()
+
+# Calculate average monthly review count (as a proxy for momentum)
+monthly_avg = emerging.groupby('name')['review_count'].mean().reset_index()
+monthly_avg.columns = ['name', 'monthly_avg']
+
+# Merge
+growth_df = total_reviews.merge(monthly_avg, on='name').sort_values(by='monthly_avg', ascending=False)
+
+print(growth_df.head(10))  # Top emerging fast-growers
+
+summary = df.groupby('name')['review_count'].sum().sort_values(ascending=False)
+top_names = summary.head(5).index.tolist()
+
+# Step 2: Pick the top one
+top_business = top_names[0]  # You can also loop through top_names for multiple plots
+
+# Step 3: Filter data for the top business
+top_df = df[df['name'] == top_business].sort_values('month')
+
+# Step 4: Create the dual-axis plot
+fig, ax1 = plt.subplots(figsize=(12, 6))
+
+# Left y-axis: review count
+ax1.set_title(f'Monthly Review Count & Average Rating for {top_business}')
+ax1.plot(top_df['month'], top_df['review_count'], color='blue', label='Review Count', marker='o')
+ax1.set_xlabel('Month')
+ax1.set_ylabel('Review Count', color='blue')
+ax1.tick_params(axis='y', labelcolor='blue')
+
+# Right y-axis: average rating
+ax2 = ax1.twinx()
+ax2.plot(top_df['month'], top_df['avg_rating'], color='orange', label='Avg Rating', marker='s')
+ax2.set_ylabel('Average Rating', color='orange')
+ax2.tick_params(axis='y', labelcolor='orange')
+
+# Formatting
+plt.xticks(rotation=45)
+fig.tight_layout()
+plt.show()
+```
+Finally I created a ranking system with several factors to select the best company.
+
+```python
+
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import MinMaxScaler
+
+# Step 0: Load your data
+df = pd.read_csv('/Users/weichi/Desktop/beauty_spas_monthly_reviews6.csv')
+df['month'] = pd.to_datetime(df['month'])
+
+# -----------------------------
+# Step 1: Compute Review Growth (slope over time)
+# -----------------------------
+def compute_growth(business_df):
+    business_df = business_df.sort_values('month')
+    x = np.arange(len(business_df)).reshape(-1, 1)
+    y = business_df['review_count'].values.reshape(-1, 1)
+    if len(x) > 1:
+        model = LinearRegression().fit(x, y)
+        return model.coef_[0][0]
+    else:
+        return 0
+
+growth = df.groupby('name').apply(compute_growth).reset_index()
+growth.columns = ['name', 'growth']
+
+# -----------------------------
+# Step 2: Placeholder for Sentiment (set to 0.0)
+# -----------------------------
+df['sentiment'] = 0.0
+sentiment = df.groupby('name')['sentiment'].mean().reset_index()
+
+# -----------------------------
+# Step 3: Compute Total Review Volume and Avg Rating
+# -----------------------------
+volume = df.groupby('name')['review_count'].sum().reset_index()
+avg_rating = df.groupby('name')['avg_rating'].mean().reset_index()
+
+# -----------------------------
+# Step 4: Compute Loyalty Score (active months with ≥ 2 reviews)
+# -----------------------------
+active_months = df.groupby('name')['month'].nunique().reset_index()
+loyal_months = df[df['review_count'] >= 2].groupby('name')['month'].nunique().reset_index()
+
+active_months.columns = ['name', 'total_months']
+loyal_months.columns = ['name', 'loyal_months']
+
+loyalty = pd.merge(active_months, loyal_months, on='name', how='left').fillna(0)
+loyalty['loyalty_score'] = loyalty['loyal_months'] / loyalty['total_months']
+loyalty = loyalty[['name', 'loyalty_score']]
+
+# -----------------------------
+# Step 5: Merge All Metrics
+# -----------------------------
+combined = (
+    growth
+    .merge(sentiment, on='name')
+    .merge(volume, on='name')
+    .merge(avg_rating, on='name')
+    .merge(loyalty, on='name')
+)
+
+# -----------------------------
+# Step 6: Normalize Each Metric (0–1 scale)
+# -----------------------------
+scaler = MinMaxScaler()
+combined[['growth_norm', 'sentiment_norm', 'volume_norm', 'avg_rating_norm', 'loyalty_norm']] = scaler.fit_transform(
+    combined[['growth', 'sentiment', 'review_count', 'avg_rating', 'loyalty_score']]
+)
+
+# -----------------------------
+# Step 7: Weighted Scoring Formula
+# -----------------------------
+combined['final_score'] = (
+    0.25 * combined['avg_rating_norm'] +
+    0.25 * combined['growth_norm'] +
+    0.20 * combined['volume_norm'] +
+    0.20 * combined['sentiment_norm'] +  # currently 0s
+    0.10 * combined['loyalty_norm']
+)
+
+# Sort by overall score
+combined = combined.sort_values(by='final_score', ascending=False).reset_index(drop=True)
+print(combined.head(10))  # Top 10 businesses
+
+```
+
+
+
+
+
+
 
 
 
