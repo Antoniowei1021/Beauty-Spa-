@@ -131,28 +131,8 @@ Increased digital transparency may have exposed service gaps
 In yelp_review table, there are 3 columns: funny, useful, and cool. The column itself is an integer, with larger value indicating more funny/useful/cool. First, extract the values of these 3 columns with a sql sentence:
 
 ```python
-query = """
-SELECT DISTINCT
-    r.text,
-    r.date,
-    r.funny,
-    r.useful,
-    r.cool
-FROM yelp_review r
-JOIN yelp_business b ON r.business_id = b.business_id
-WHERE b.categories LIKE '%Beauty & Spas%'
-AND r.text IS NOT NULL 
-ORDER BY r.date ASC
-"""
-df = pd.read_sql(query, conn)
-df.to_csv('/Users/weichi/Desktop/funny_useful_cool.csv', index=False)
-
-conn.close()
-df = pd.read_csv('/Users/weichi/Desktop/funny_useful_cool.csv')
-df['date'] = pd.to_datetime(df['date'])
-months_dt = df['date'].dt.to_period('M').dt.to_timestamp()
-
 plt.figure(figsize=(10, 6))
+plt.plot(df['date'], df['funny'], label='Funny')
 plt.plot(months_dt, df["funny"], color='b', label='Funny')
 
 ```
@@ -179,46 +159,12 @@ cool
 
 
 ## Select Top company
-```python
-query = """
-SELECT 
-    name, 
-    stars, 
-    review_count
-FROM yelp_business
-WHERE categories LIKE '%Beauty & Spas%'
-ORDER BY stars DESC, review_count DESC
-LIMIT 1;
-"""
-df = pd.read_sql(query, conn)
-df.to_csv('/Users/weichi/Desktop/top_company.csv', index=False)
 
-conn.close()
-```
 | Name                        | Stars | Review Count |
 |----------------------------|-------|---------------|
 | Fabulous Eyebrow Threading |  5.0  |      475      |
 
 ## Select Bottom Company
-
-```python
-query = """
-SELECT 
-    name, 
-    stars, 
-    review_count
-FROM yelp_business
-WHERE categories LIKE '%Beauty & Spas%'
-ORDER BY stars ASC, review_count ASC
-LIMIT 1;
-"""
-df = pd.read_sql(query, conn)
-df.to_csv('/Users/weichi/Desktop/bottom_company.csv', index=False)
-
-conn.close()
-```
-
-### Bottom Rated Company
 
 | Name                   | Stars | Review Count |
 |------------------------|-------|---------------|
@@ -414,7 +360,6 @@ Next, the reviews are splitted into two groups, positive and negative. One thing
 
 ```python
 from transformers import pipeline
-
 classifier = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
 texts = lower[:2000] 
 results = classifier(texts, truncation=True, batch_size=16)
@@ -484,37 +429,7 @@ Text(0.5, 1.0, 'Positive Words from Reviews')
 
 And here is the negative word cloud:
 
-```python
-docs1 = list(nlp.pipe(lower_cleaned2[:2000]))
-adjectives2 = []
-nouns2 = []
-for doc in docs1:
-    for token in doc:
-        if token.pos_ == 'ADJ' and not token.is_stop and len(token.text) > 2:
-            adjectives2.append(token.lemma_.lower())
-        elif token.pos_ in ['NOUN', 'PROPN'] and not token.is_stop and len(token.text) > 2:
-            nouns2.append(token.lemma_.lower())
-umap_model = UMAP(random_state=10)  # fixed seed for reproducibility
-topic_model = BERTopic(umap_model=umap_model)
-topic_model = BERTopic()
-topics, probs = topic_model.fit_transform(nouns2)
-topic_info = topic_model.get_topic_info()
-print(topic_info[:20])
-keyword_dict2 = dict(
-    topic_info.apply(lambda row: (row['Name'].split('_')[1], row['Count']), axis=1)
-)
-keyword_dict2 = word_freq_cleaned = {v[0]: v[1] for v in keyword_dict2.values()}
-del keyword_dict2['nail']
-del keyword_dict2['foil']
 
-wordcloud2 = WordCloud(width=800, height=400, background_color='white').generate_from_frequencies(keyword_dict2)
-# Plot it
-plt.figure(figsize=(10, 5))
-plt.imshow(wordcloud2, interpolation='bilinear')
-plt.axis('off')
-plt.title('Negative Words from Reviews')
-plt.show()
-```
 ![image](https://github.com/user-attachments/assets/be95bbd4-aa46-4191-9a80-7ef60c33225e)
 
 This time I used nouns to point out areas that can cause negative reviews. 
@@ -591,19 +506,17 @@ print(summary.head(10))
 | Bombshell Nail & Spa   | 341          | 3.96           |
 
 ```python
-# Step 1: Get top 4 business names by total review count
-summary = df.groupby('name')['review_count'].sum().sort_values(ascending=False).reset_index()
-top_names = summary['name'].tolist()
+df['month'] = pd.to_datetime(df['month'])
 
-# Step 2: Filter to only those businesses
-df_filtered = df[df['name'].isin(top_names)]
+# Top 4 businesses by total review count
+top_names = df.groupby('name')['review_count'].sum().nlargest(4).index.tolist()
+df_top = df[df['name'].isin(top_names)]
 
-# Step 3: Group by month and sum review_count
-monthly_total = df_filtered.groupby('month')['review_count'].sum().reset_index()
+# Monthly total review count for top businesses
+monthly_total = df_top.groupby('month')['review_count'].sum().reset_index()
 
 plt.figure(figsize=(12, 6))
 plt.plot(monthly_total['month'], monthly_total['review_count'], marker='o')
-
 plt.title('Total Monthly Review Count (Top 4 Nail Spas)')
 plt.xlabel('Month')
 plt.ylabel('Total Review Count')
@@ -611,148 +524,93 @@ plt.xticks(rotation=45)
 plt.grid(True)
 plt.tight_layout()
 plt.show()
+```
 
-df['month'] = pd.to_datetime(df['month'])
+The output:
 
-# Earliest month each business appears
+![image](https://github.com/user-attachments/assets/8e9219b3-343b-4504-bb23-49578de5e977)
+
+```python 
+# Emerging businesses (appeared after 2015)
 first_seen = df.groupby('name')['month'].min().reset_index()
-first_seen.columns = ['name', 'first_month']
+recent_df = df.merge(first_seen, on='name', suffixes=('', '_first'))
+emerging = recent_df[recent_df['month_first'] >= '2016-01-01']
 
-# Merge with overall review stats
-recent_df = df.merge(first_seen, on='name')
-
-# Filter businesses that appeared after 2015
-emerging = recent_df[recent_df['first_month'] >= '2016-01-01']
-# Calculate total reviews per business
-total_reviews = emerging.groupby('name')['review_count'].sum().reset_index()
-
-# Calculate average monthly review count (as a proxy for momentum)
+# Rank emerging businesses by avg monthly reviews
 monthly_avg = emerging.groupby('name')['review_count'].mean().reset_index()
 monthly_avg.columns = ['name', 'monthly_avg']
+top_emerging = monthly_avg.sort_values(by='monthly_avg', ascending=False).head(10)
+print(top_emerging)
 
-# Merge
-growth_df = total_reviews.merge(monthly_avg, on='name').sort_values(by='monthly_avg', ascending=False)
-
-print(growth_df.head(10))  # Top emerging fast-growers
-
-summary = df.groupby('name')['review_count'].sum().sort_values(ascending=False)
-top_names = summary.head(5).index.tolist()
-
-# Step 2: Pick the top one
-top_business = top_names[0]  # You can also loop through top_names for multiple plots
-
-# Step 3: Filter data for the top business
+# Dual-axis plot for the top business
+top_business = df.groupby('name')['review_count'].sum().nlargest(1).index[0]
 top_df = df[df['name'] == top_business].sort_values('month')
 
-# Step 4: Create the dual-axis plot
 fig, ax1 = plt.subplots(figsize=(12, 6))
-
-# Left y-axis: review count
 ax1.set_title(f'Monthly Review Count & Average Rating for {top_business}')
 ax1.plot(top_df['month'], top_df['review_count'], color='blue', label='Review Count', marker='o')
 ax1.set_xlabel('Month')
 ax1.set_ylabel('Review Count', color='blue')
 ax1.tick_params(axis='y', labelcolor='blue')
-
-# Right y-axis: average rating
 ax2 = ax1.twinx()
 ax2.plot(top_df['month'], top_df['avg_rating'], color='orange', label='Avg Rating', marker='s')
 ax2.set_ylabel('Average Rating', color='orange')
 ax2.tick_params(axis='y', labelcolor='orange')
-
-# Formatting
 plt.xticks(rotation=45)
 fig.tight_layout()
 plt.show()
 ```
+![image](https://github.com/user-attachments/assets/30c5909d-e297-43ca-a23b-b7175c50f56a)
+
 Finally I created a ranking system with several factors to select the best company.
 
 ```python
-
-import numpy as np
-from sklearn.linear_model import LinearRegression
-from sklearn.preprocessing import MinMaxScaler
-
-# Step 0: Load your data
-df = pd.read_csv('/Users/weichi/Desktop/beauty_spas_monthly_reviews6.csv')
-df['month'] = pd.to_datetime(df['month'])
-
-# -----------------------------
-# Step 1: Compute Review Growth (slope over time)
-# -----------------------------
-def compute_growth(business_df):
-    business_df = business_df.sort_values('month')
-    x = np.arange(len(business_df)).reshape(-1, 1)
-    y = business_df['review_count'].values.reshape(-1, 1)
-    if len(x) > 1:
-        model = LinearRegression().fit(x, y)
-        return model.coef_[0][0]
-    else:
-        return 0
-
-growth = df.groupby('name').apply(compute_growth).reset_index()
-growth.columns = ['name', 'growth']
-
-# -----------------------------
-# Step 2: Placeholder for Sentiment (set to 0.0)
-# -----------------------------
-df['sentiment'] = 0.0
-sentiment = df.groupby('name')['sentiment'].mean().reset_index()
-
-# -----------------------------
-# Step 3: Compute Total Review Volume and Avg Rating
-# -----------------------------
-volume = df.groupby('name')['review_count'].sum().reset_index()
-avg_rating = df.groupby('name')['avg_rating'].mean().reset_index()
-
-# -----------------------------
-# Step 4: Compute Loyalty Score (active months with ≥ 2 reviews)
-# -----------------------------
-active_months = df.groupby('name')['month'].nunique().reset_index()
-loyal_months = df[df['review_count'] >= 2].groupby('name')['month'].nunique().reset_index()
-
-active_months.columns = ['name', 'total_months']
-loyal_months.columns = ['name', 'loyal_months']
-
-loyalty = pd.merge(active_months, loyal_months, on='name', how='left').fillna(0)
-loyalty['loyalty_score'] = loyalty['loyal_months'] / loyalty['total_months']
-loyalty = loyalty[['name', 'loyalty_score']]
-
-# -----------------------------
-# Step 5: Merge All Metrics
-# -----------------------------
-combined = (
-    growth
-    .merge(sentiment, on='name')
-    .merge(volume, on='name')
-    .merge(avg_rating, on='name')
-    .merge(loyalty, on='name')
-)
-
-# -----------------------------
-# Step 6: Normalize Each Metric (0–1 scale)
-# -----------------------------
-scaler = MinMaxScaler()
-combined[['growth_norm', 'sentiment_norm', 'volume_norm', 'avg_rating_norm', 'loyalty_norm']] = scaler.fit_transform(
-    combined[['growth', 'sentiment', 'review_count', 'avg_rating', 'loyalty_score']]
-)
-
-# -----------------------------
-# Step 7: Weighted Scoring Formula
-# -----------------------------
 combined['final_score'] = (
     0.25 * combined['avg_rating_norm'] +
     0.25 * combined['growth_norm'] +
     0.20 * combined['volume_norm'] +
-    0.20 * combined['sentiment_norm'] +  # currently 0s
+    0.20 * combined['sentiment_norm'] +
     0.10 * combined['loyalty_norm']
 )
-
-# Sort by overall score
-combined = combined.sort_values(by='final_score', ascending=False).reset_index(drop=True)
-print(combined.head(10))  # Top 10 businesses
-
 ```
+### Top 10 Ranked Businesses
+
+| Name                | Growth  | Volume | Avg Rating | Loyalty | Final Score |
+|---------------------|---------|--------|------------|---------|--------------|
+| Diamond Nails & Spa | 0.078   | 622    | 4.14       | 0.91    | 0.63         |
+| Elaine's Nails      | 0.054   | 463    | 4.40       | 0.95    | 0.61         |
+| FINO for MEN        | 0.088   | 351    | 4.71       | 0.89    | 0.61         |
+| 702 Nail Lounge     | 0.164   | 346    | 4.39       | 0.97    | 0.60         |
+| LOOK Style Society  | 0.005   | 376    | 4.32       | 0.96    | 0.59         |
+| Nail 21             | 2.800   | 24     | 5.00       | 0.75    | 0.58         |
+| KNC Skin            | 2.000   | 10     | 5.00       | 1.00    | 0.58         |
+| The Nail Bar        | 0.018   | 370    | 4.13       | 0.93    | 0.58         |
+| Luxury Thai Spa     | 0.112   | 231    | 4.68       | 0.95    | 0.57         |
+| Lacquer Me Up       | 0.229   | 207    | 4.78       | 0.86    | 0.56         |
+
+
+As a result, there are a few advices that could be given to the employers of this industry to improve their ratings and stars:
+
+### 1. Improve Appointment Management & Punctuality
+
+Frequently customers complained about wait times and delays. So an online booking system is essential to keep punctuality. It can also reduce overbooking. Or Acknowledge lateness and offer partial discounts or sincere apologies.
+
+### 2. Enhance Service Consistency Across Technicians
+
+Some customers complained about inconsistency accross some technicians. so we need to have senior staff mentor new hires, or regularly solicit feedback from clients on individual experiences.
+
+### 3. Boost Cleanliness and Salon Ambiance
+
+Positive reviews frequently highlighted “clean,” “comfortable,” and “pleasant” atmospheres.
+
+Action:
+
+Conduct daily sanitation walkthroughs.
+
+Invest in comfortable seating, calming décor, and soft lighting.
+
+Add light music or offer refreshments to enhance the experience.
+
 
 
 
